@@ -1,47 +1,45 @@
 -- ==============================================================================
-# [Portfolio / Unofficial] real-estate-analytics
--- レベル1: 物件詳細ビューから内見申し込みへの成約率（CVR）分析クエリ（店舗・マーケ向け）
--- 【ビジネス要求】不動産ポータルにおいて、間取り・築年数セグメントごとに、
---  「総閲覧数」「内見申込数」「成約率（CVR %）」を算出し、優良物件の傾向を可視化する
+# [Portfolio / Unofficial] dhc-health-analytics
+-- レベル1: 春季キャンペーン（4月〜6月）の前年同期比（YoY）購買行動比較クエリ
+-- 【ビジネス要求】健康食品ECにおける、今年と去年の4月〜6月期間を対象に、
+--  「アクティブ購入会員数」「総売上高」「平均客単価」の推移を比較・検証する
 -- ==============================================================================
 
-WITH property_logs AS (
+WITH seasonal_raw_data AS (
     SELECT 
-        log.property_id,
-        prop.layout_type, -- '1K', '1LDK', '2LDK' など
-        -- 【築年数のクレンジング】築年数（age）に応じてセグメント化
-        CASE 
-            WHEN prop.building_age < 5 THEN 'A_新築・築浅(5年未満)'
-            WHEN prop.building_age < 15 THEN 'B_中堅(5-15年未満)'
-            ELSE 'C_ベテラン(15年以上)'
-        END AS age_segment,
-        log.is_viewed,
-        log.is_applied -- 内見申し込みフラグ (1 = 申込あり, 0 = なし)
+        -- 購入タイムスタンプから「年（YYYY）」を抽出
+        DATE_FORMAT(purchase_timestamp, '%Y') AS purchase_year,
+        order_id,
+        user_id,
+        price_amount
     FROM 
-        real_estate_property_logs AS log
-    LEFT JOIN 
-        property_master AS prop
-    ON 
-        log.property_id = prop.property_id
+        dhc_sales_logs
     WHERE 
-        log.action_timestamp >= '2026-01-01'
+        -- ターゲットとなる「4月1日 〜 6月30日」を正確にスキャン
+        DATE_FORMAT(purchase_timestamp, '%m-%d') BETWEEN '04-01' AND '06-30'
+        -- 2025年と2026年の2カ年を対象に指定
+        AND purchase_timestamp BETWEEN '2025-01-01' AND '2026-12-31'
 )
 SELECT 
-    layout_type,
-    age_segment,
-    -- 【閲覧ハコ】総PV数
-    SUM(is_viewed) AS total_page_views,
-    -- 【申込ハコ】総内見申し込み数
-    SUM(is_applied) AS total_applications,
-    -- 【成約率KPI】（内見申込数 / 総PV数）× 100 で物件ごとのCVR（%）を自動算出
-    CASE 
-        WHEN SUM(is_viewed) = 0 THEN 0.00
-        ELSE ROUND((SUM(is_applied) * 100.0) / SUM(is_viewed), 2)
-    END AS view_to_apply_cvr_percentage
+    purchase_year,
+    
+    -- 【ファン層の熱量KPI】期間中に実際に購入したユニークなアクティブ会員数
+    COUNT(DISTINCT user_id) AS active_purchasing_members,
+    
+    -- 【総売上高】
+    SUM(price_amount) AS total_campaign_revenue,
+    
+    -- 【購買頻度】期間中の総注文数
+    COUNT(DISTINCT order_id) AS total_orders_count,
+    
+    -- 【ロイヤル客単価KPI】サプリメントECで最重要視される「1注文あたりの平均購入額」
+    ROUND(SUM(price_amount) / COUNT(DISTINCT order_id), 0) AS average_order_value,
+    
+    -- 【会員1人あたりLTV】期間中における、会員1人あたりの平均合計購買金額
+    ROUND(SUM(price_amount) / COUNT(DISTINCT user_id), 0) AS revenue_per_member
 FROM 
-    property_logs
+    seasonal_raw_data
 GROUP BY 
-    layout_type,
-    age_segment
+    purchase_year
 ORDER BY 
-    view_to_apply_cvr_percentage DESC;
+    purchase_year ASC;
